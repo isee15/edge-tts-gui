@@ -30,7 +30,7 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          pyinstaller --noconfirm --onefile --windowed --icon=favicon.ico --add-data "favicon.ico:." --name "小夕TTS" tts_gui.py
+          pyinstaller --noconfirm --onefile --windowed --icon=icon.ico --add-data "icon.ico:." --name "小夕TTS" tts_gui.py
 
       - name: Create .app bundle
         run: |
@@ -66,7 +66,7 @@ jobs:
         run: |
           create-dmg \
             --volname "小夕TTS" \
-            --volicon "favicon.ico" \
+            --volicon "icon.ico" \
             --window-pos 200 120 \
             --window-size 600 300 \
             --icon-size 100 \
