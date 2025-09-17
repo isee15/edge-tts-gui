@@ -29,7 +29,7 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          pyinstaller --noconfirm --onefile --windowed --icon=icon.ico --add-data "icon.ico;." --name "小夕TTS" es_gui.py
+          pyinstaller --noconfirm --onefile --windowed --icon=icon.ico --add-data "icon.ico;." --name "小夕TTS" tts_gui.py
 
       - name: List dist directory
         run: |

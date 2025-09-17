@@ -30,7 +30,7 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          pyinstaller --noconfirm --onefile --windowed --icon=favicon.ico --add-data "favicon.ico:." --name "小夕TTS" es_gui.py
+          pyinstaller --noconfirm --onefile --windowed --icon=favicon.ico --add-data "favicon.ico:." --name "小夕TTS" tts_gui.py
 
       - name: Create .app bundle
         run: |
