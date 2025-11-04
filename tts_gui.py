@@ -1,6 +1,7 @@
 import asyncio
 import os
 import sys
+from pydub import AudioSegment
 
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtWidgets import (QApplication, QComboBox, QFileDialog,
@@ -72,10 +73,25 @@ class BatchTTSThread(QThread):
                     continue
 
                 output_file = os.path.splitext(file_path)[0] + ".mp3"
-                communicate = edge_tts.Communicate(
-                    text, self.voice, rate=self.rate, volume=self.volume, pitch=self.pitch
-                )
-                await communicate.save(output_file)
+                segments = [text[j:j+2000] for j in range(0, len(text), 2000)]
+                audio_segments = []
+
+                for segment in segments:
+                    temp_output = os.path.splitext(file_path)[0] + f"_{segments.index(segment)}.mp3"
+                    communicate = edge_tts.Communicate(
+                        segment, self.voice, rate=self.rate, volume=self.volume, pitch=self.pitch
+                    )
+                    await communicate.save(temp_output)
+                    audio_segments.append(AudioSegment.from_mp3(temp_output))
+
+                combined = sum(audio_segments)
+                combined.export(output_file, format="mp3")
+
+                # Clean up temporary files
+                for segment in segments:
+                    temp_output = os.path.splitext(file_path)[0] + f"_{segments.index(segment)}.mp3"
+                    os.remove(temp_output)
+
             except Exception as e:
                 # Log error for a single file but continue with others
                 print(f"处理文件 {file_path} 出错: {e}")
