@@ -38,7 +38,7 @@ pip install -r requirements.txt
 
 ## 📥 下载
 
-**夸克网盘链接**: https://pan.quark.cn/s/0e52b9dd5e5e
+**夸克网盘链接**: https://pan.quark.cn/s/d5eda639003e
 **CSDN**: https://download.csdn.net/download/problc/91395590
 
 ## 🚀 如何使用

@@ -51,22 +51,22 @@ from PyQt6.QtWidgets import (QApplication, QComboBox, QFileDialog,
                              QMessageBox, QProgressBar, QPushButton, QTextEdit,
                              QVBoxLayout, QWidget, QSlider)
 from PyQt6.QtCore import Qt, QUrl
-from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QIcon, QIntValidator
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 import edge_tts
 
-async def generate_audio(text, output_file, voice, rate, volume, pitch):
+async def generate_audio(text, output_file, voice, rate, volume, pitch, split_length=2000):
     # Optimize for short text: skip splitting and ffmpeg merging
-    if len(text) < 2000:
+    if len(text) < split_length:
         communicate = edge_tts.Communicate(
             text, voice, rate=rate, volume=volume, pitch=pitch
         )
         await communicate.save(output_file)
         return
 
-    # Split text into chunks of 2000 characters
-    chunks = [text[i:i + 2000] for i in range(0, len(text), 2000)]
+    # Split text into chunks of split_length characters
+    chunks = [text[i:i + split_length] for i in range(0, len(text), split_length)]
     temp_files = []
     try:
         for idx, chunk in enumerate(chunks):
@@ -102,7 +102,7 @@ class TTSThread(QThread):
     finished = pyqtSignal(str)
     error = pyqtSignal(str)
 
-    def __init__(self, text, voice, output_file, rate, volume, pitch):
+    def __init__(self, text, voice, output_file, rate, volume, pitch, split_length=2000):
         super().__init__()
         self.text = text
         self.voice = voice
@@ -110,12 +110,13 @@ class TTSThread(QThread):
         self.rate = rate
         self.volume = volume
         self.pitch = pitch
+        self.split_length = split_length
 
     def run(self):
         try:
             asyncio.run(generate_audio(
                 self.text, self.output_file, self.voice, 
-                self.rate, self.volume, self.pitch
+                self.rate, self.volume, self.pitch, self.split_length
             ))
             self.finished.emit(f"成功保存到 {self.output_file}")
         except Exception as e:
@@ -126,13 +127,14 @@ class BatchTTSThread(QThread):
     finished = pyqtSignal()
     error = pyqtSignal(str)
 
-    def __init__(self, files, voice, rate, volume, pitch):
+    def __init__(self, files, voice, rate, volume, pitch, split_length=2000):
         super().__init__()
         self.files = files
         self.voice = voice
         self.rate = rate
         self.volume = volume
         self.pitch = pitch
+        self.split_length = split_length
 
     def run(self):
         try:
@@ -156,7 +158,7 @@ class BatchTTSThread(QThread):
                 
                 await generate_audio(
                     text, output_file, self.voice, 
-                    self.rate, self.volume, self.pitch
+                    self.rate, self.volume, self.pitch, self.split_length
                 )
 
             except Exception as e:
@@ -209,8 +211,15 @@ class TTSApp(QWidget):
         self.output_file_edit = QLineEdit("output.mp3")
         options_layout.addWidget(self.output_file_edit, 1, 1)
 
+        # Split Length
+        options_layout.addWidget(QLabel('分割长度:'), 2, 0)
+        self.split_length_edit = QLineEdit("2000")
+        self.split_length_edit.setValidator(QIntValidator(100, 10000))
+        self.split_length_edit.setPlaceholderText("默认2000")
+        options_layout.addWidget(self.split_length_edit, 2, 1)
+
         # Rate Slider
-        options_layout.addWidget(QLabel('语速 (rate):'), 2, 0)
+        options_layout.addWidget(QLabel('语速 (rate):'), 3, 0)
         self.rate_slider = QSlider(Qt.Orientation.Horizontal)
         self.rate_slider.setRange(-100, 100)
         self.rate_slider.setValue(0)
@@ -219,10 +228,10 @@ class TTSApp(QWidget):
         rate_layout = QHBoxLayout()
         rate_layout.addWidget(self.rate_slider)
         rate_layout.addWidget(self.rate_label)
-        options_layout.addLayout(rate_layout, 2, 1)
+        options_layout.addLayout(rate_layout, 3, 1)
 
         # Volume Slider
-        options_layout.addWidget(QLabel('音量 (volume):'), 3, 0)
+        options_layout.addWidget(QLabel('音量 (volume):'), 4, 0)
         self.volume_slider = QSlider(Qt.Orientation.Horizontal)
         self.volume_slider.setRange(-100, 100)
         self.volume_slider.setValue(0)
@@ -231,10 +240,10 @@ class TTSApp(QWidget):
         volume_layout = QHBoxLayout()
         volume_layout.addWidget(self.volume_slider)
         volume_layout.addWidget(self.volume_label)
-        options_layout.addLayout(volume_layout, 3, 1)
+        options_layout.addLayout(volume_layout, 4, 1)
 
         # Pitch Slider
-        options_layout.addWidget(QLabel('音调 (pitch):'), 4, 0)
+        options_layout.addWidget(QLabel('音调 (pitch):'), 5, 0)
         self.pitch_slider = QSlider(Qt.Orientation.Horizontal)
         self.pitch_slider.setRange(-50, 50)
         self.pitch_slider.setValue(0)
@@ -243,7 +252,7 @@ class TTSApp(QWidget):
         pitch_layout = QHBoxLayout()
         pitch_layout.addWidget(self.pitch_slider)
         pitch_layout.addWidget(self.pitch_label)
-        options_layout.addLayout(pitch_layout, 4, 1)
+        options_layout.addLayout(pitch_layout, 5, 1)
 
 
         layout.addLayout(options_layout)
@@ -302,11 +311,16 @@ class TTSApp(QWidget):
         volume = self.volume_label.text()
         pitch = self.pitch_label.text()
         
+        try:
+            split_length = int(self.split_length_edit.text().strip())
+        except ValueError:
+            split_length = 2000
+
         self.generate_btn.setEnabled(False)
         self.status_label.setText('正在生成...')
         self.progress_bar.setRange(0, 0) # Indeterminate progress
 
-        self.tts_thread = TTSThread(text, voice, output_file, rate, volume, pitch)
+        self.tts_thread = TTSThread(text, voice, output_file, rate, volume, pitch, split_length)
         self.tts_thread.finished.connect(self.on_tts_finished)
         self.tts_thread.error.connect(self.on_tts_error)
         self.tts_thread.start()
@@ -342,11 +356,16 @@ class TTSApp(QWidget):
         volume = self.volume_label.text()
         pitch = self.pitch_label.text()
         
+        try:
+            split_length = int(self.split_length_edit.text().strip())
+        except ValueError:
+            split_length = 2000
+
         self.batch_btn.setEnabled(False)
         self.generate_btn.setEnabled(False)
         self.status_label.setText("开始批量转换...")
 
-        self.batch_thread = BatchTTSThread(files, voice, rate, volume, pitch)
+        self.batch_thread = BatchTTSThread(files, voice, rate, volume, pitch, split_length)
         self.batch_thread.progress.connect(self.update_batch_progress)
         self.batch_thread.finished.connect(self.on_batch_finished)
         self.batch_thread.error.connect(self.on_batch_error)
