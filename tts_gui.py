@@ -1,7 +1,49 @@
 import asyncio
 import os
 import sys
+import subprocess
+import tempfile
+
+# Monkey patch subprocess.Popen immediately to ensure all calls are covered
+if sys.platform == "win32":
+    _old_popen = subprocess.Popen
+    def _popen_no_window(*args, **kwargs):
+        # Create or update startupinfo
+        startupinfo = kwargs.get('startupinfo')
+        if startupinfo is None:
+            startupinfo = subprocess.STARTUPINFO()
+        
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        kwargs['startupinfo'] = startupinfo
+        
+        # Create or update creationflags
+        creationflags = kwargs.get('creationflags', 0)
+        creationflags |= 0x08000000 # CREATE_NO_WINDOW
+        kwargs['creationflags'] = creationflags
+        
+        return _old_popen(*args, **kwargs)
+    
+    subprocess.Popen = _popen_no_window
+
 from pydub import AudioSegment
+
+# Configure pydub to use ffmpeg from current directory or exe directory
+if sys.platform == "win32":
+    # Determine base path
+    if getattr(sys, 'frozen', False):
+        # If run from PyInstaller exe
+        base_path = os.path.dirname(sys.executable)
+    else:
+        base_path = os.getcwd()
+
+    ffmpeg_exe = os.path.join(base_path, "ffmpeg.exe")
+    
+    if os.path.exists(ffmpeg_exe):
+        AudioSegment.converter = ffmpeg_exe
+        os.environ["PATH"] = os.path.dirname(ffmpeg_exe) + os.pathsep + os.environ.get("PATH", "")
+    else:
+        print(f"Warning: ffmpeg.exe not found in {base_path}")
 
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtWidgets import (QApplication, QComboBox, QFileDialog,
@@ -13,6 +55,47 @@ from PyQt6.QtGui import QIcon
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 import edge_tts
+
+async def generate_audio(text, output_file, voice, rate, volume, pitch):
+    # Optimize for short text: skip splitting and ffmpeg merging
+    if len(text) < 2000:
+        communicate = edge_tts.Communicate(
+            text, voice, rate=rate, volume=volume, pitch=pitch
+        )
+        await communicate.save(output_file)
+        return
+
+    # Split text into chunks of 2000 characters
+    chunks = [text[i:i + 2000] for i in range(0, len(text), 2000)]
+    temp_files = []
+    try:
+        for idx, chunk in enumerate(chunks):
+            # Create temp file, get name, and close it to avoid locking issues on Windows
+            f = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+            f.close()
+            temp_files.append(f.name)
+            
+            communicate = edge_tts.Communicate(
+                chunk, voice, rate=rate, volume=volume, pitch=pitch
+            )
+            await communicate.save(f.name)
+
+        # Merge audio files
+        if not temp_files:
+            return
+
+        combined = AudioSegment.empty()
+        for temp_file in temp_files:
+            combined += AudioSegment.from_file(temp_file)
+        combined.export(output_file, format="mp3")
+    finally:
+        # Clean up temporary files
+        for temp_file in temp_files:
+            if os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                except:
+                    pass
 
 class TTSThread(QThread):
     progress = pyqtSignal(int)
@@ -30,16 +113,13 @@ class TTSThread(QThread):
 
     def run(self):
         try:
-            asyncio.run(self._save())
+            asyncio.run(generate_audio(
+                self.text, self.output_file, self.voice, 
+                self.rate, self.volume, self.pitch
+            ))
             self.finished.emit(f"成功保存到 {self.output_file}")
         except Exception as e:
             self.error.emit(str(e))
-
-    async def _save(self):
-        communicate = edge_tts.Communicate(
-            self.text, self.voice, rate=self.rate, volume=self.volume, pitch=self.pitch
-        )
-        await communicate.save(self.output_file)
 
 class BatchTTSThread(QThread):
     progress = pyqtSignal(int, int, str) # current, total, filename
@@ -73,24 +153,11 @@ class BatchTTSThread(QThread):
                     continue
 
                 output_file = os.path.splitext(file_path)[0] + ".mp3"
-                segments = [text[j:j+2000] for j in range(0, len(text), 2000)]
-                audio_segments = []
-
-                for segment in segments:
-                    temp_output = os.path.splitext(file_path)[0] + f"_{segments.index(segment)}.mp3"
-                    communicate = edge_tts.Communicate(
-                        segment, self.voice, rate=self.rate, volume=self.volume, pitch=self.pitch
-                    )
-                    await communicate.save(temp_output)
-                    audio_segments.append(AudioSegment.from_mp3(temp_output))
-
-                combined = sum(audio_segments)
-                combined.export(output_file, format="mp3")
-
-                # Clean up temporary files
-                for segment in segments:
-                    temp_output = os.path.splitext(file_path)[0] + f"_{segments.index(segment)}.mp3"
-                    os.remove(temp_output)
+                
+                await generate_audio(
+                    text, output_file, self.voice, 
+                    self.rate, self.volume, self.pitch
+                )
 
             except Exception as e:
                 # Log error for a single file but continue with others
